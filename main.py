@@ -3,7 +3,7 @@ import numpy as np
 from matplotlib.ticker import EngFormatter
 
 # Import our custom modules
-from ltspice_parser import parse_ltspice_txt
+from ltspice_parser import parse_ltspice_single, parse_ltspice_mirror
 from characterization import extract_vth_and_kprime, extract_body_effect, extract_lambda
 from plotting import plot_sqrt_id_vs_vgate, plot_lambda_fits
 
@@ -15,29 +15,30 @@ def process_device(
     save_dir = "graphs/"
     os.makedirs(save_dir, exist_ok=True)
 
-    # 1. Parse and Extract K-Prime & V_th
-    # kprime file: Col 0 is Current, Col 1 is Voltage
-    kprime_sweeps = parse_ltspice_txt(single_file, x_col=1, y_col=0)
-    vth_vals, k_prime, _, _ = extract_vth_and_kprime(kprime_sweeps, L, W)
+    single_sweeps = parse_ltspice_single(
+        single_file, "V(vgs)" if device_type == "NMOS" else "V(vsg)", "Ibias"
+    )
+    vth_vals, k_prime, _, _ = extract_vth_and_kprime(single_sweeps, L, W)
 
     # NMOS V_T0 is positive. PMOS V_T0 is negative (but extracted from magnitude data)
     vt0 = vth_vals[0] if device_type == "NMOS" else -vth_vals[0]
 
-    # 2. Extract Body Effect
-    v_body_vals = np.array([s.step_value for s in kprime_sweeps])
-    two_phi_f, gamma, _, _ = extract_body_effect(vth_vals, v_body_vals)
+    two_phi_f, gamma, _, _ = extract_body_effect(single_sweeps)
 
-    # 3. Extract Lambda
-    # lambda file: Col 0 is Voltage, Col 1 is Current
-    lambda_sweeps = parse_ltspice_txt(mirror_file, x_col=0, y_col=1)
-    lambda_vals = extract_lambda(lambda_sweeps)
+    lambda_sweeps = parse_ltspice_mirror(
+        mirror_file,
+        "V(vgs)" if device_type == "NMOS" else "V(vsg)",
+        "Vdd",
+        "I(Vsb)" if device_type == "NMOS" else "I(Vds)",
+    )
+    lambda_vals = extract_lambda(lambda_sweeps, vt0)
 
-    # 4. Generate Plots
-    slopes = [np.polyfit(np.sqrt(s.y_data), s.x_data, 1)[0] for s in kprime_sweeps]
-    plot_sqrt_id_vs_vgate(kprime_sweeps, vth_vals, slopes, device_type, save_dir)
-    plot_lambda_fits(lambda_sweeps, device_type, save_dir)
+    # Generate plots
+    slopes = [np.polyfit(np.sqrt(s.drain_current), s.gate_voltage, 1)[0] for s in single_sweeps]
+    plot_sqrt_id_vs_vgate(single_sweeps, vth_vals, slopes, device_type, save_dir)
+    plot_lambda_fits(lambda_sweeps, vt0, device_type, save_dir)
 
-    # 5. Output Formatting
+    # Print output
     fmt_k = EngFormatter(unit="A/V^2", places=3)
     fmt_v = EngFormatter(unit="V", places=3)
     fmt_g = EngFormatter(unit="V^1/2", places=3)
@@ -49,7 +50,9 @@ def process_device(
     print(f"2phi_F   = {fmt_v(two_phi_f)}")
     print(f"gamma    = {fmt_g(gamma)}")
     for i, lam in enumerate(lambda_vals):
-        print(f"lambda_{i+1} = {fmt_l(lam)} (L = {fmt_len(lambda_sweeps[i].step_value)})")
+        print(
+            f"lambda_{i+1} = {fmt_l(lam)} (L = {fmt_len(lambda_sweeps[i].channel_length)})"
+        )
 
 
 if __name__ == "__main__":
