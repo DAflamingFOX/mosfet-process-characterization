@@ -1,5 +1,9 @@
 ltspice/*_data.txt
 
+*.log
+*.net
+*.raw
+
 __pycache__
 
 graphs
