@@ -30,8 +30,8 @@ def plot_sqrt_id_vs_vgate(
         plt.plot(
             v_gate,
             sqrt_id,
-            "s",
-            markersize=3,
+            "-",
+            linewidth=3,
             label=f"{vb_label}={sweep.body_voltage}V",
         )
 
@@ -59,38 +59,91 @@ def plot_lambda_fits(
     save_dir: str,
     v_range: float = 0.2,
     margin: float = 0.05,
+    stride: int = 10,
 ):
     """Plots drain current vs drain voltage and highlights the linear fit window used for lambda."""
     plt.figure(figsize=(10, 7))
-    # colors = ["b", "g", "r", "c", "m"]
 
     vd_label = r"$V_{ds}$" if device_type == "NMOS" else r"$V_{sd}$"
     L_label = r"$L_{n}$" if device_type == "NMOS" else r"$L_{p}$"
 
-    for i, sweep in enumerate(sweeps):
+    for sweep in sweeps:
         plt.plot(
-            sweep.supply_voltage,
-            sweep.drain_current,
-            ".",
-            markersize=2,
-            # color=colors[i],
+            sweep.supply_voltage[::stride],
+            sweep.drain_current[::stride],
+            "-",
+            linewidth=1,
             label=f"{L_label}={sweep.channel_length:.2e}m",
         )
 
         v_ds_sat = sweep.gate_voltage - np.abs(vt0)
-
         v_start = v_ds_sat + margin
         v_end = v_start + v_range
 
         mask = (sweep.supply_voltage >= v_start) & (sweep.supply_voltage <= v_end)
+
+        if not np.any(mask):
+            continue
+
         p = np.polyfit(sweep.supply_voltage[mask], sweep.drain_current[mask], deg=1)
         x_fit = np.linspace(v_start, v_end, 100)
-        plt.plot(x_fit, p[0] * x_fit + p[1], "y", linewidth=3)
+        plt.plot(x_fit, p[0] * x_fit + p[1], "y", linewidth=2)
 
     plt.grid(True, alpha=0.5)
     plt.xlabel(f"{vd_label} (V)")
     plt.ylabel(r"$I_{d}$ (A)")
     plt.title(f"$I_{{d}}$ vs {vd_label} with Estimation Windows")
-    plt.legend(loc="upper left")
+    plt.legend(loc="lower right")
     plt.savefig(f"{save_dir}{device_type.lower()}_id_vs_vds.png", dpi=300)
+    plt.close()
+
+
+def plot_lambda_values(
+    lambdas: List[float],
+    lambda_sweeps: List[MirrorSweepData],
+    device_type: str,
+    save_dir: str,
+):
+    plt.figure(figsize=(10, 7))
+
+    plt.plot([s.channel_length for s in lambda_sweeps], lambdas, "b-", linewidth=1)
+    plt.plot([s.channel_length for s in lambda_sweeps], lambdas, "ok", markersize=4)
+
+    plt.xlabel("Channel Length (m)")
+    plt.ylabel(r"$\lambda_{n}$  (V$^{-1}$)")
+    plt.title(r"$\lambda_{n}$ vs Channel Length")
+    plt.grid(axis="both", which="both", alpha=0.5)
+    plt.savefig(f"{save_dir}{device_type.lower()}_lambdas", dpi=300)
+    plt.close()
+
+
+def plot_two_phi_f_estimation(
+    two_phi_f_vals: List[float],
+    residual_vals: List[float],
+    best_idx: int,
+    device_type: str,
+    save_dir: str,
+):
+    plt.figure(figsize=(10, 7))
+    plt.grid(True, "both")
+    plt.semilogy(
+        two_phi_f_vals,
+        residual_vals,
+        "-",
+        color="b",
+        linewidth=1,
+    )
+    plt.plot(
+        two_phi_f_vals[best_idx],
+        residual_vals[best_idx],
+        "*",
+        color="m",
+        markersize=10,
+        label="Best",
+    )
+    plt.title(r"2-norm error vs $2\phi_{F}$ estimates")
+    plt.xlabel(r"$2\phi_{F}$")
+    plt.ylabel("2-norm error")
+    plt.legend(loc="upper left")
+    plt.savefig(f"{save_dir}{device_type.lower()}_two-phi-f.png", dpi=300)
     plt.close()
