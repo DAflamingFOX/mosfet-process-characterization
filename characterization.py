@@ -33,43 +33,57 @@ def extract_body_effect(
     Solves for 2*Phi_f and Gamma.
     V_T = V_T0 + gamma * (sqrt(2phi_f + V_sb) - sqrt(2phi_f))
     """
+    num_sweeps = len(sweeps)
 
-    vth_vals = []
-    v_body_vals = np.array([sweep.body_voltage for sweep in sweeps])
+    # We need 1 reference sweep + at least 3 biased sweeps to get 2 sequential error terms
+    if num_sweeps < 4:
+        raise ValueError(
+            f"At least 4 sweeps are required to generate a minimum of 2 error terms."
+            f"Received {num_sweeps} sweep(s)."
+        )
 
-    for sweep in sweeps:
-        _, b = np.polyfit(np.sqrt(sweep.drain_current), sweep.gate_voltage, deg=1)
-        vth_vals.append(b)
+    # Extract Vth and V_body for all sweeps
+    v_body_vals = np.array([s.body_voltage for s in sweeps])
+    vth_vals = np.array(
+        [np.polyfit(np.sqrt(s.drain_current), s.gate_voltage, deg=1)[1] for s in sweeps]
+    )
 
-    a1 = vth_vals[1] - vth_vals[0]
-    a2 = vth_vals[2] - vth_vals[0]
-    a3 = vth_vals[3] - vth_vals[0]
+    # a_vals represent delta V_T for the biased sweeps
+    a_vals = vth_vals[1:] - vth_vals[0]
 
-    gamma_term = lambda tpf, vb: np.sqrt(tpf + vb) - np.sqrt(tpf)
+    # Calculate measured ratios: a_{i+1} / a_{i}
+    measured_ratios = a_vals[1:] / a_vals[:-1]
 
-    e1 = lambda tpf: (
-        gamma_term(tpf, v_body_vals[2]) / gamma_term(tpf, v_body_vals[1])
-    ) - (a2 / a1)
-    e2 = lambda tpf: (
-        gamma_term(tpf, v_body_vals[3]) / gamma_term(tpf, v_body_vals[2])
-    ) - (a3 / a2)
-    twonorm = lambda e1, e2: np.sqrt(e1**2 + e2**2)
+    # Generate tpf values
+    tpf_vals = np.linspace(0, 2, 10_000)
 
-    tpf_vals = np.linspace(0.3, 1.3, 10_000)
-    residuals = np.array([twonorm(e1(tpf), e2(tpf)) for tpf in tpf_vals])
+    # Reshape tpf_vals to a column vector for broadcasting against body voltages
+    tpf_grid = tpf_vals[:, np.newaxis]
+    vb_grid = v_body_vals[1:]
 
+    # Calculate gamma_terms for all tpf values and all biased sweeps simultaneously
+    gamma_terms = np.sqrt(tpf_grid + vb_grid) - np.sqrt(tpf_grid)
+
+    # Calculate theoretical ratios: gamma_term_{i+1} / gamma_term_{i}
+    theoretical_ratios = gamma_terms[:, 1:] / gamma_terms[:, :-1]
+
+    # Calculate residuals (L2 norm / 2-norm across all error terms for a given tpf)
+    errors = theoretical_ratios - measured_ratios
+    residuals = np.sqrt(np.sum(errors**2, axis=1))
+
+    # Extract the best fit parameters
     best_idx = np.argmin(residuals)
     two_phi_f = tpf_vals[best_idx]
     best_error = residuals[best_idx]
 
-    # Linear fit for Gamma
-    x_vals = np.array([gamma_term(two_phi_f, vb) for vb in v_body_vals])
+    # Linear fit for Gamma using all sweeps
+    x_vals = np.sqrt(two_phi_f + v_body_vals) - np.sqrt(two_phi_f)
     y_vals = vth_vals - vth_vals[0]
 
-    p, _, _, _, _ = np.polyfit(x_vals, y_vals, deg=1, full=True)
+    p = np.polyfit(x_vals, y_vals, deg=1)
     gamma = p[0]
 
-    return two_phi_f, gamma, best_error, best_idx
+    return two_phi_f, gamma, tpf_vals, residuals, best_idx
 
 
 def extract_lambda(
@@ -98,6 +112,6 @@ def extract_lambda(
 
         m, b = p[0], p[1]
 
-        lambda_vals.append(m/b)
+        lambda_vals.append(m / b)
 
     return lambda_vals
